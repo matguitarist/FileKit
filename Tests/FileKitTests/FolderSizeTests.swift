@@ -138,4 +138,18 @@ import Testing
         let summary = try FolderSize.summary(of: s.root, options: .init(staysOnVolume: true))
         #expect(summary.logical == 1_000)
     }
+
+    @Test func everyLinkCanCountAsACopyWouldNeed() throws {
+        let s = try Scratch()
+        defer { s.clean() }
+        let photo = try s.file("inner/photo.raw", bytes: 200_000)
+        try FileManager.default.linkItem(at: photo, to: s.url("again.raw"))
+        let once = try FolderSize.summary(of: s.root)
+        let every = try FolderSize.summary(of: s.root, options: .init(countsEveryLink: true))
+        #expect(once.logical == 200_000)
+        #expect(every.logical == 400_000)
+        #expect(every.files == 2)
+        #expect(every.allocated == once.allocated * 2)
+        #expect(every.items == once.items)
+    }
 }

@@ -30,11 +30,16 @@ public enum FolderSize {
         public var skipping: [URL]
         /// Leaves out other disks mounted inside the folder.
         public var staysOnVolume: Bool
+        /// Counts a file with several hard links once per link, as a copy or a zip that doesn't keep links needs.
+        /// False (the default) counts it once, as the disk does.
+        public var countsEveryLink: Bool
 
-        public init(excluding: Set<String> = [], skipping: [URL] = [], staysOnVolume: Bool = false) {
+        public init(excluding: Set<String> = [], skipping: [URL] = [], staysOnVolume: Bool = false,
+                    countsEveryLink: Bool = false) {
             self.excluding = excluding
             self.skipping = skipping
             self.staysOnVolume = staysOnVolume
+            self.countsEveryLink = countsEveryLink
         }
     }
 
@@ -80,7 +85,7 @@ public enum FolderSize {
         if top.isSymbolicLink == true { return result }
         var linked: Set<UInt64> = []
         guard top.isDirectory == true else {
-            add(top, to: &result, linked: &linked)
+            add(top, to: &result, linked: &linked, everyLink: options.countsEveryLink)
             return result
         }
         // The enumerator would skip a folder it can't open and answer zero.
@@ -110,16 +115,17 @@ public enum FolderSize {
                 }
             }
             result.items += 1
-            add(values, to: &result, linked: &linked)
+            add(values, to: &result, linked: &linked, everyLink: options.countsEveryLink)
         }
         if Task.isCancelled { throw CancellationError() }
         return result
     }
 
-    private static func add(_ values: URLResourceValues, to result: inout Summary, linked: inout Set<UInt64>) {
+    private static func add(_ values: URLResourceValues, to result: inout Summary, linked: inout Set<UInt64>,
+                            everyLink: Bool) {
         guard values.isRegularFile == true, values.isSymbolicLink != true else { return }
         // A file with several names counts the first time only.
-        if (values.linkCount ?? 1) > 1, let id = values.fileIdentifier, !linked.insert(id).inserted { return }
+        if !everyLink, (values.linkCount ?? 1) > 1, let id = values.fileIdentifier, !linked.insert(id).inserted { return }
         result.files += 1
         result.allocated += Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
         result.logical += Int64(values.fileSize ?? 0)

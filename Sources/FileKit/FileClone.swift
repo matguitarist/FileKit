@@ -18,11 +18,29 @@ public enum FileClone {
         case none
     }
 
-    public enum Failure: Error, Equatable, Sendable {
+    public enum Failure: Error, Equatable, Sendable, LocalizedError, CustomStringConvertible {
         /// Something is already at the target; nothing was touched.
         case targetExists(String)
         /// The item can't be cloned there: another disk, or a disk that isn't APFS.
         case cannotClone(POSIXErrorCode)
+
+        /// The system's words for the reason ("Cross-device link"), for a log line.
+        public var reason: String {
+            switch self {
+            case .targetExists: String(cString: strerror(EEXIST))
+            case .cannotClone(let code): String(cString: strerror(code.rawValue))
+            }
+        }
+
+        /// For logs, in English: "Already exists: /path", "Can't clone: Cross-device link".
+        public var description: String {
+            switch self {
+            case .targetExists(let path): "Already exists: \(path)"
+            case .cannotClone: "Can't clone: \(reason)"
+            }
+        }
+
+        public var errorDescription: String? { description }
     }
 
     /// Clones `source` (a file or a whole folder) to `target`, which must not exist yet; its folder is made.

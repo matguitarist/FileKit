@@ -89,4 +89,11 @@ import Testing
         #expect(FileClone.sameVolume(s.root, s.url("not/yet/there")))
         #expect(FileClone.sameVolume(s.root, FileManager.default.temporaryDirectory))
     }
+
+    @Test func failuresReadWellInALog() {
+        #expect(FileClone.Failure.targetExists("/x/y").description == "Already exists: /x/y")
+        #expect(FileClone.Failure.cannotClone(.EXDEV).reason == "Cross-device link")
+        #expect(FileClone.Failure.cannotClone(.EXDEV).localizedDescription == "Can't clone: Cross-device link")
+        #expect("\(FileClone.Failure.cannotClone(.ENOTSUP))" == "Can't clone: Operation not supported")
+    }
 }

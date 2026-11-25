@@ -90,4 +90,46 @@ struct Library: Codable, Equatable, Sendable {
         try file.remove()
         #expect(!file.exists)
     }
+
+    @Test func aFileThatCantBeReadAtAllIsReportedAndSetAside() throws {
+        let s = try Scratch()
+        defer { s.clean() }
+        let file = JSONFile<Library>(s.url("library.json"))
+        try file.save(sample)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.url.path)
+        do {
+            _ = try file.load()
+            Issue.record("an unreadable file loaded")
+        } catch let damaged as JSONFile<Library>.Damaged {
+            #expect(damaged.cause == .unreadable)
+            #expect(damaged.keptAt == nil)
+            #expect(file.exists)
+        }
+        do {
+            _ = try file.load(setAsideDamaged: true)
+            Issue.record("an unreadable file loaded")
+        } catch let damaged as JSONFile<Library>.Damaged {
+            #expect(damaged.cause == .unreadable)
+            let kept = try #require(damaged.keptAt)
+            #expect(!file.exists)
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: kept.path)
+            #expect(try JSONFile<Library>(kept).load() == sample)
+        }
+    }
+
+    @Test func aFolderInPlaceOfTheFileIsUnreadable() throws {
+        let s = try Scratch()
+        defer { s.clean() }
+        try s.folder("library.json/inside")
+        let file = JSONFile<Library>(s.url("library.json"))
+        #expect { try file.load() } throws: { ($0 as? JSONFile<Library>.Damaged)?.cause == .unreadable }
+    }
+
+    @Test func badJSONIsNotTheValue() throws {
+        let s = try Scratch()
+        defer { s.clean() }
+        let file = JSONFile<Library>(s.url("library.json"))
+        try Data("{ not json".utf8).write(to: file.url)
+        #expect { try file.load() } throws: { ($0 as? JSONFile<Library>.Damaged)?.cause == .notTheValue }
+    }
 }

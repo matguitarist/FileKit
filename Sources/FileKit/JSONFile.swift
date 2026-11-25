@@ -12,12 +12,20 @@ public struct JSONFile<Value: Codable>: Sendable {
         case secondsSince1970
     }
 
-    /// A file that couldn't be read as the value. With `setAsideDamaged`, it was renamed to `keptAt`, so the next
-    /// save can't overwrite what the person had.
+    /// A file that couldn't be read as the value, or couldn't be read at all. With `setAsideDamaged`, it was renamed
+    /// to `keptAt`, so the next save can't overwrite what the person had.
     public struct Damaged: Error, LocalizedError, Sendable {
+        public enum Cause: Sendable, Equatable {
+            /// The bytes were read but aren't the value: bad JSON, a missing key, a wrong type.
+            case notTheValue
+            /// The file couldn't be read at all: no permission, a folder in its place, a read error.
+            case unreadable
+        }
+
         public let url: URL
         public let keptAt: URL?
         public let reason: String
+        public var cause: Cause = .notTheValue
 
         public var errorDescription: String? { reason }
     }
@@ -35,24 +43,37 @@ public struct JSONFile<Value: Codable>: Sendable {
 
     public var exists: Bool { FileManager.default.fileExists(atPath: url.path) }
 
-    /// The value, or nil when there is no file yet. Throws `Damaged` when the file can't be read as the value; with
-    /// `setAsideDamaged` the file is first renamed to "<name> (damaged <date>).json" beside it.
+    /// The value, or nil when there is no file yet. Throws `Damaged` when the file can't be read as the value
+    /// (`cause` `.notTheValue`) or can't be read at all (`.unreadable`: no permission, a folder in its place); with
+    /// `setAsideDamaged` the file is first renamed to "<name> (damaged <date>).json" beside it, so the next save
+    /// can't write over it.
     public func load(setAsideDamaged: Bool = false) throws -> Value? {
-        guard exists else { return nil }
-        let data = try Data(contentsOf: url)
+        guard exists || isLink else { return nil }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw damaged(.unreadable, error, setAside: setAsideDamaged)
+        }
         do {
             return try decoder.decode(Value.self, from: data)
         } catch {
-            var kept: URL?
-            if setAsideDamaged {
-                let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)
-                    .timeSeparator(.omitted).dateTimeSeparator(.space))
-                let name = url.deletingPathExtension().lastPathComponent + " (damaged \(stamp))"
-                let target = url.deletingLastPathComponent().appending(path: name).appendingPathExtension(url.pathExtension)
-                if (try? FileManager.default.moveItem(at: url, to: target)) != nil { kept = target }
-            }
-            throw Damaged(url: url, keptAt: kept, reason: Self.describe(error))
+            throw damaged(.notTheValue, error, setAside: setAsideDamaged)
         }
+    }
+
+    private var isLink: Bool { (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil }
+
+    private func damaged(_ cause: Damaged.Cause, _ error: any Error, setAside: Bool) -> Damaged {
+        var kept: URL?
+        if setAside {
+            let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)
+                .timeSeparator(.omitted).dateTimeSeparator(.space))
+            let name = url.deletingPathExtension().lastPathComponent + " (damaged \(stamp))"
+            let target = url.deletingLastPathComponent().appending(path: name).appendingPathExtension(url.pathExtension)
+            if (try? FileManager.default.moveItem(at: url, to: target)) != nil { kept = target }
+        }
+        return Damaged(url: url, keptAt: kept, reason: Self.describe(error), cause: cause)
     }
 
     /// The value, or `fallback` when there is no file yet.
