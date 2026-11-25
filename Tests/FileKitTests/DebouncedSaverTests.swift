@@ -17,8 +17,9 @@ final class Saved: Sendable {
 
 struct Refused: Error {}
 
+// One at a time: `finish` blocks the main actor while it waits, which would throw off the other tests' timing.
 @MainActor
-@Suite struct DebouncedSaverTests {
+@Suite(.serialized) struct DebouncedSaverTests {
     @Test func aRunOfChangesIsSavedOnceWithTheLastValue() async throws {
         let saved = Saved()
         let saver = DebouncedSaver<Int>(delay: .milliseconds(80)) { saved.add($0) }
@@ -119,5 +120,97 @@ struct Refused: Error {}
         saver.schedule(["a", "b"])
         await saver.flush()
         #expect(try file.load() == ["a", "b"])
+    }
+
+    @Test func finishWaitsForASaveRunningSoNoOlderOneLandsAfter() async throws {
+        let s = try Scratch()
+        defer { s.clean() }
+        let url = s.url("library.json")
+        let saved = Saved()
+        // The first write is slow, as a big library on a slow disk: the final one must still land last.
+        let saver = DebouncedSaver<Int>(delay: .milliseconds(1), write: { value in
+            if value == 1 { Thread.sleep(forTimeInterval: 0.3) }
+            try JSONFile<Int>(url).save(value)
+            saved.add(value)
+        })
+        saver.schedule(1)
+        try await Task.sleep(for: .milliseconds(80))
+        saver.schedule(2)
+        try saver.finish()
+        #expect(saved.all == [1, 2])
+        #expect(saved.onMain == [false, true])
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(saved.all == [1, 2])
+        #expect(try JSONFile<Int>(url).load() == 2)
+        #expect(!saver.isBusy)
+    }
+
+    @Test func finishWritesAValueQueuedBehindARunningSaveAndDropsTheQueuedSave() async throws {
+        let saved = Saved()
+        let saver = DebouncedSaver<Int>(delay: .milliseconds(1), write: { value in
+            if value == 1 { Thread.sleep(forTimeInterval: 0.3) }
+            saved.add(value)
+        })
+        saver.schedule(1)
+        try await Task.sleep(for: .milliseconds(80))
+        saver.schedule(2)
+        try await Task.sleep(for: .milliseconds(80))
+        // 2 waits behind 1, not started: finish writes it, and its own save never runs.
+        #expect(!saver.hasPending)
+        try saver.finish()
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(saved.all == [1, 2])
+    }
+
+    @Test func finishWithNothingWaitingWritesNothing() async throws {
+        let saved = Saved()
+        let saver = DebouncedSaver<Int>(delay: .milliseconds(1), write: { saved.add($0) })
+        try saver.finish()
+        saver.schedule(1)
+        await saver.flush()
+        try saver.finish()
+        #expect(saved.all == [1])
+    }
+
+    @Test func finishRunsAnAsyncSaveAndWaitsForIt() async throws {
+        let saved = Saved()
+        let saver = DebouncedSaver<Int>(delay: .seconds(60)) { value in
+            try? await Task.sleep(for: .milliseconds(50))
+            saved.add(value)
+        }
+        saver.schedule(3)
+        try saver.finish()
+        #expect(saved.all == [3])
+    }
+
+    @Test func finishGivesUpOnASaveThatRunsTooLongAndKeepsTheValue() async throws {
+        let saved = Saved()
+        let saver = DebouncedSaver<Int>(delay: .milliseconds(1), write: { value in
+            if value == 1 { Thread.sleep(forTimeInterval: 0.5) }
+            saved.add(value)
+        })
+        saver.schedule(1)
+        try await Task.sleep(for: .milliseconds(80))
+        saver.schedule(2)
+        #expect(throws: DebouncedSaver<Int>.StillSaving.self) { try saver.finish(timeout: .milliseconds(50)) }
+        #expect(saver.hasPending)
+        await saver.flush()
+        #expect(saved.all == [1, 2])
+    }
+
+    @Test func finishReportsAFailedWrite() throws {
+        let saver = DebouncedSaver<Int>(delay: .seconds(60), write: { _ in throw Refused() })
+        saver.schedule(1)
+        #expect(throws: Refused.self) { try saver.finish() }
+    }
+
+    @Test func finishSavesAJSONFile() throws {
+        let s = try Scratch()
+        defer { s.clean() }
+        let file = JSONFile<[String]>(s.url("library.json"))
+        let saver = DebouncedSaver(file, delay: .seconds(60))
+        saver.schedule(["a"])
+        try saver.finish()
+        #expect(try file.load() == ["a"])
     }
 }
