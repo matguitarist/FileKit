@@ -112,7 +112,7 @@ Saves run one at a time, in order. With `maxWait`, changes that never settle (ty
 ## Keychain
 
 ```swift
-let keychain = Keychain(service: "com.mathieuares.hangar")
+let keychain = Keychain(service: "com.example.app")
 try keychain.set(token, for: "steam")            // nil or "" removes it
 let token = keychain.string(for: "steam")        // nil when there is none
 try keychain.set(keyData, for: "sync-key")       // Data too

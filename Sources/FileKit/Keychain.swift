@@ -7,7 +7,7 @@ import Security
 /// the person's Keychain. Safe from any thread.
 ///
 /// ```swift
-/// let keychain = Keychain(service: "com.mathieuares.hangar")
+/// let keychain = Keychain(service: "com.example.app")
 /// try keychain.set(token, for: "steam")     // nil or "" removes it
 /// let token = keychain.string(for: "steam")
 /// ```
