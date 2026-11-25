@@ -107,4 +107,15 @@ import Testing
         #expect(failure.status == errSecDuplicateItem)
         #expect(failure.errorDescription?.isEmpty == false)
     }
+
+    @Test func inMemoryStoresAreSharedPerServiceInTheProcess() throws {
+        let service = "FileKitTests.\(UUID().uuidString)"
+        let one = Keychain.inMemory(service: service)
+        let two = Keychain.inMemory(service: service)
+        let other = Keychain.inMemory(service: service + ".other")
+        try one.set("secret", for: "a")
+        #expect(two.string(for: "a") == "secret")
+        #expect(other.string(for: "a") == nil)
+        try one.remove(nil)
+    }
 }

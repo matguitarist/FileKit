@@ -12,12 +12,12 @@ Shared rules for how every project is laid out and named:
 
 - `Sources/FileKit/` no SwiftUI, macOS and iOS:
   - `FolderSize`: `allocated(of:)`, `logical(of:)`, `measure` (async), `summary(of:)` (sync); hard links once,
-    links not followed, `Options` (excluding, skipping, staysOnVolume), `otherAppsData`.
+    links not followed, `Options` (excluding, skipping, staysOnVolume, countsEveryLink), `otherAppsData`.
   - `FolderMove`: `move(_:into:keeping:progress:)` (rename on one disk; copy, check, delete across disks),
     `databaseFiles`, `listFiles`, `size(of:excluding:)`.
   - `FileClone`: `clone(_:to:fallback:)`, `copy(_:to:stop:copied:)`, `sameVolume`.
-  - `JSONFile<Value>`: `load`, `load(or:)`, `save`, `remove`, damaged files set aside.
-  - `DebouncedSaver<Value>`: `schedule`, `flush`, `takePending`, `cancel`, `maxWait`.
+  - `JSONFile<Value>`: `load`, `load(or:)`, `save`, `remove`, damaged or unreadable files set aside (`Damaged.cause`).
+  - `DebouncedSaver<Value>`: `schedule`, `flush`, `finish` (sync, at quit), `takePending`, `cancel`, `maxWait`, `write:`.
   - `Keychain`: `string`/`data(for:)`, `set(_:for:)`, `remove`, `contains`, `adopt(_:from:)`, `inMemory(service:)`.
 - `Tests/FileKitTests/` Swift Testing. Files only under `FileManager.default.temporaryDirectory` (`Scratch`); Keychain
   tests use a service named `FileKitTests.<uuid>` and remove it.

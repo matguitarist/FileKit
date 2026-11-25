@@ -18,7 +18,7 @@ macOS 14 or iOS 17 or later. No SwiftUI.
 SwiftPM (`Package.swift`):
 
 ```swift
-.package(url: "https://github.com/matguitarist/FileKit", from: "0.1.0"),
+.package(url: "https://github.com/matguitarist/FileKit", from: "0.2.0"),
 // in the app or Kit target:
 .product(name: "FileKit", package: "FileKit"),
 ```
@@ -29,7 +29,7 @@ XcodeGen (`project.yml`):
 packages:
   FileKit:
     url: https://github.com/matguitarist/FileKit
-    from: 0.1.0
+    from: 0.2.0
 targets:
   App:
     dependencies:
@@ -51,7 +51,8 @@ summary.allocated; summary.logical; summary.files; summary.items
 
 A file with several hard links counts once; symbolic links are not followed; hidden files count. `skipping` leaves
 folders out wherever they are (`otherAppsData`: ~/Library/Containers and Group Containers, which make macOS ask for
-permission). `staysOnVolume` leaves out disks mounted inside. Code already off the main thread can call
+permission). `staysOnVolume` leaves out disks mounted inside. `countsEveryLink` counts a hard-linked file once per
+link, as a copy or a zip that doesn't keep links needs. Code already off the main thread can call
 `FolderSize.summary(of:options:)` directly.
 
 ## Move a data folder
@@ -86,6 +87,8 @@ try FileClone.copy(source, to: target, stop: { flag.isCancelled }, copied: { byt
 ```
 
 The target must not exist yet (`.targetExists`); its folder is made. A copy that fails or stops removes what it made.
+`FileClone.Failure` reads well in a log: `"\(error)"` gives "Can't clone: Cross-device link", and `reason` the system's
+words alone ("Cross-device link"); word it for people in the app's own languages from the case.
 
 ## JSON files, saved once changes settle
 
@@ -94,20 +97,28 @@ let file = JSONFile<[Game]>(folder.appending(path: "library.json"))   // ISO dat
 do {
     games = try file.load(setAsideDamaged: true) ?? []
 } catch let damaged as JSONFile<[Game]>.Damaged {
+    // damaged.cause: .notTheValue (bad JSON, a missing key) or .unreadable (no permission, a folder in its place)
     log("The library couldn't be read (\(damaged.reason)); kept as \(damaged.keptAt?.lastPathComponent ?? "-")")
 }
 
 @MainActor let saver = DebouncedSaver(file, delay: .milliseconds(400)) { error in notice = error.localizedDescription }
 saver.schedule(games)                       // after every change: one write once they settle, off the main thread
 await saver.flush()                         // before reading the file again
-if let last = saver.takePending() { try? file.save(last) }    // at quit, synchronously
+try saver.finish()                          // at quit, synchronously: waits for a save running, then writes the newest
 ```
 
-`setAsideDamaged` renames a file that can't be read to "library (damaged <date>).json", so the next save can't erase
+`setAsideDamaged` renames a file that can't be read (as the value, or at all) to "library (damaged <date>).json", so the next save can't erase
 what the person had. Other date styles: `.foundation` (what a plain `JSONEncoder()` writes), `.secondsSince1970`.
 
 `DebouncedSaver` saves anything, not only files: `DebouncedSaver(delay: .milliseconds(700)) { try await api.post($0) }`.
 Saves run one at a time, in order. With `maxWait`, changes that never settle (typing) are still saved that often.
+
+At quit, or before reading the file again from synchronous code, call `finish()`: it waits for a save already running,
+drops older saves that haven't started, and saves the newest value not yet saved, so an older save can never land after
+the final one. With a `JSONFile` or a synchronous `write:` closure (`DebouncedSaver(write: { try defaults.set(...) })`)
+it writes on the calling thread; with an async `save` it waits for it. Past `timeout` (10 s by default) with a save
+still running, it throws `StillSaving` and writes nothing, and the value waits again. `takePending()` still hands the
+value back, but a save already running could then land after the one the app makes with it.
 
 ## Keychain
 
@@ -124,6 +135,11 @@ let keychain = Store.isOverridden ? Keychain.inMemory(service: service) : Keycha
 // An app's old name: move its secret once.
 try keychain.adopt("user", from: Keychain(service: "com.romsbox.app"))
 ```
+
+`Keychain.inMemory(service:)` keeps one store per service for the whole process: every in-memory `Keychain` of that
+service sees the same secrets, across tests and across objects. Tests that stand for separate devices or must not see
+each other's secrets each use their own service, such as `"sync.test.\(UUID().uuidString)"`, and remove it with
+`remove(nil)` when done.
 
 Options: `label` (the name Keychain Access shows), `accessible` (`.afterFirstUnlock` for a sync that runs while
 locked, `.afterFirstUnlockThisDeviceOnly`, ...), `synchronizable` (iCloud Keychain) and `accessGroup` (apps of one
